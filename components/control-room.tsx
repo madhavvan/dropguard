@@ -243,6 +243,40 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
 
         {/* Right: metrics + feed */}
         <div className="space-y-6 lg:col-span-2">
+          {/* Self-auditing correctness seal — DropGuard verifies its own invariant
+              after every run: orders sold must never exceed inventory. */}
+          {metrics && metrics.total_attempts > 0 && (
+            <div
+              className={`row-in rounded-lg border p-4 ${
+                metrics.oversold === 0
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-destructive/40 bg-destructive/5"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {metrics.oversold === 0 ? (
+                  <ShieldCheck className="h-5 w-5 text-primary" />
+                ) : (
+                  <ShieldAlert className="h-5 w-5 text-destructive" />
+                )}
+                <span
+                  className={`font-mono text-sm font-semibold uppercase tracking-wider ${
+                    metrics.oversold === 0 ? "text-primary" : "text-destructive"
+                  }`}
+                >
+                  {metrics.oversold === 0 ? "Invariant verified" : "Invariant violated"}
+                </span>
+              </div>
+              <p className="mt-2 font-mono text-xs leading-relaxed text-muted-foreground">
+                sold {compact(sold)} ≤ inventory {compact(total)} · oversold{" "}
+                <span className={metrics.oversold === 0 ? "text-primary" : "text-destructive"}>
+                  {metrics.oversold}
+                </span>{" "}
+                · checked against {compact(metrics.total_attempts)} attempts
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MetricTile
               label="Confirmed"
