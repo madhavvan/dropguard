@@ -1,4 +1,4 @@
-import { query } from "./db"
+import { query, queryIn } from "./db"
 import type { PurchaseMode, Region, Outcome } from "./types"
 
 export const REGIONS: Region[] = ["us-east-1", "us-east-2"]
@@ -13,18 +13,17 @@ export interface PurchaseResult {
 }
 
 /**
- * Execute a single purchase against a drop.
+ * Execute a single purchase against a drop, writing through the given region's
+ * Aurora DSQL endpoint.
  *
- * SAFE: an atomic guarded UPDATE on drops.sold_count gates every sale, with
- *   OCC retry on serialization failure (Postgres 40001). Aurora DSQL's strong
- *   consistency means concurrent writers to the same row are serialized — the
- *   guard can NEVER let sold_count exceed total_inventory. On success we insert
- *   the order. orders count stays exactly in lock-step with sold_count.
+ * SAFE: an atomic guarded UPDATE on drops.sold_count gates every sale, with OCC
+ *   retry on serialization failure (Postgres 40001). Because the two regional
+ *   endpoints are one logical, strongly consistent database, two buyers in two
+ *   regions can never both pass the `sold_count < total_inventory` guard. The
+ *   counter can NEVER exceed inventory.
  *
- * NAIVE: the classic anti-pattern — read the current count, check it against
- *   inventory, then write. The write is an INSERT into orders (a fresh row, so
- *   it never contends and never gets a guard). Many concurrent requests read
- *   the same stale count, all pass the check, and all insert -> oversell.
+ * NAIVE: read-check-write with no guard. Concurrent buyers (in either region) read
+ *   the same stale count and all insert -> oversell.
  */
 export async function purchase(dropId: string, mode: PurchaseMode, region: Region): Promise<PurchaseResult> {
   const start = Date.now()
@@ -37,7 +36,8 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        const res = await query<{ sold_count: number }>(
+        const res = await queryIn<{ sold_count: number }>(
+          region,
           `UPDATE drops
              SET sold_count = sold_count + 1
            WHERE id = $1 AND sold_count < total_inventory
@@ -46,7 +46,7 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
         )
         if (res.rowCount && res.rowCount > 0) {
           position = res.rows[0].sold_count
-          await query(`INSERT INTO orders (drop_id, region, mode, position) VALUES ($1, $2, $3, $4)`, [
+          await queryIn(region, `INSERT INTO orders (drop_id, region, mode, position) VALUES ($1, $2, $3, $4)`, [
             dropId,
             region,
             mode,
@@ -71,7 +71,8 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
   } else {
     // NAIVE: read-check-write, no atomic guard on the counter.
     try {
-      const read = await query<{ sold: number; total_inventory: number }>(
+      const read = await queryIn<{ sold: number; total_inventory: number }>(
+        region,
         `SELECT (SELECT count(*) FROM orders WHERE drop_id = $1)::int AS sold,
                 total_inventory
            FROM drops WHERE id = $1`,
@@ -83,7 +84,7 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
         const { sold, total_inventory } = read.rows[0]
         if (sold < total_inventory) {
           // No WHERE guard, fresh row -> no contention -> the oversell slips through.
-          await query(`INSERT INTO orders (drop_id, region, mode, position) VALUES ($1, $2, $3, $4)`, [
+          await queryIn(region, `INSERT INTO orders (drop_id, region, mode, position) VALUES ($1, $2, $3, $4)`, [
             dropId,
             region,
             mode,

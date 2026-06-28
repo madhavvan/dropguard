@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { purchase, recordAttemptsBulk, runWithConcurrency, REGIONS } from "@/lib/purchase"
+import { purchase, recordAttemptsBulk, runWithConcurrency } from "@/lib/purchase"
+import { configuredRegions } from "@/lib/db"
 import type { PurchaseMode, Region } from "@/lib/types"
 import { getDrop } from "@/lib/queries"
 
@@ -11,6 +12,7 @@ export async function POST(req: NextRequest) {
     const dropId: string = body.dropId
     const mode: PurchaseMode = body.mode === "naive" ? "naive" : "safe"
     const splitRegions: boolean = body.splitRegions !== false
+    const downRegions: Region[] = Array.isArray(body.downRegions) ? body.downRegions : []
     const count = Math.max(1, Math.min(5000, Math.floor(Number(body.count) || 1000)))
 
     // Validate the parent drop exists (app-layer referential integrity).
@@ -19,8 +21,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Drop not found" }, { status: 404 })
     }
 
+    // Route buyers only to healthy (not "taken down") regional endpoints. With one
+    // region down, every buyer fails over to the survivor — and still can't oversell,
+    // because both endpoints are one strongly-consistent DSQL database.
+    const healthy = configuredRegions().filter((r) => !downRegions.includes(r))
+    if (healthy.length === 0) {
+      return NextResponse.json({ error: "All regions are down" }, { status: 400 })
+    }
+
     const tasks = Array.from({ length: count }, (_, i) => {
-      const region: Region = splitRegions ? REGIONS[i % REGIONS.length] : "us-east-1"
+      const region: Region = splitRegions ? healthy[i % healthy.length] : healthy[0]
       return () => purchase(dropId, mode, region)
     })
 
@@ -40,6 +50,7 @@ export async function POST(req: NextRequest) {
       mode,
       elapsed_ms: elapsed,
       sold,
+      regions: healthy,
     })
   } catch (err: any) {
     console.log("[v0] stampede error:", err?.message)
