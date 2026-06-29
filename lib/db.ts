@@ -39,7 +39,7 @@ function makePool(region: Region): Pool {
     password: () => signer.getDbConnectAdminAuthToken(),
     port: Number(process.env.PGPORT || 5432),
     ssl: true,
-    max: 20,
+    max: 25,
   })
   attachDatabasePool(pool)
   return pool

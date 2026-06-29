@@ -195,7 +195,7 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
                 id="count"
                 type="range"
                 min={100}
-                max={5000}
+                max={2000}
                 step={100}
                 value={count}
                 onChange={(e) => setCount(Number(e.target.value))}
@@ -203,7 +203,7 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
               />
               <div className="mt-1 flex justify-between font-mono text-[11px] text-muted-foreground">
                 <span>100</span>
-                <span>5,000</span>
+                <span>2,000</span>
               </div>
             </div>
 

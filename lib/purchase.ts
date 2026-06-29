@@ -1,4 +1,4 @@
-import { query, queryIn } from "./db"
+import { query, queryIn, poolFor } from "./db"
 import type { PurchaseMode, Region, Outcome } from "./types"
 
 export const REGIONS: Region[] = ["us-east-1", "us-east-2"]
@@ -35,9 +35,12 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
     const MAX_RETRIES = 15
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      const client = await poolFor(region).connect()
       try {
-        const res = await queryIn<{ sold_count: number }>(
-          region,
+        // Gate-and-claim, then record the order in the SAME transaction so that
+        // drops.sold_count and the orders count can never drift apart.
+        await client.query("BEGIN")
+        const res = await client.query<{ sold_count: number }>(
           `UPDATE drops
              SET sold_count = sold_count + 1
            WHERE id = $1 AND sold_count < total_inventory
@@ -46,19 +49,24 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
         )
         if (res.rowCount && res.rowCount > 0) {
           position = res.rows[0].sold_count
-          await queryIn(region, `INSERT INTO orders (drop_id, region, mode, position) VALUES ($1, $2, $3, $4)`, [
+          await client.query(`INSERT INTO orders (drop_id, region, mode, position) VALUES ($1, $2, $3, $4)`, [
             dropId,
             region,
             mode,
             position,
           ])
+          await client.query("COMMIT")
           outcome = "sold"
         } else {
+          await client.query("COMMIT")
           outcome = "sold_out"
         }
         break
       } catch (err: any) {
-        // 40001 = serialization_failure (OCC conflict). Back off and retry.
+        try {
+          await client.query("ROLLBACK")
+        } catch {}
+        // 40001 = serialization_failure (OCC conflict). Roll back and retry the whole txn.
         if (err?.code === "40001" && retries < MAX_RETRIES) {
           retries++
           await sleep(Math.min(80, 2 ** retries + Math.random() * 12))
@@ -66,6 +74,8 @@ export async function purchase(dropId: string, mode: PurchaseMode, region: Regio
         }
         outcome = "error"
         break
+      } finally {
+        client.release()
       }
     }
   } else {

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic"
 export default async function DashboardPage() {
   const drops = await getDrops()
 
-  const totalSold = drops.reduce((s, d) => s + d.sold_count, 0)
+  const totalSold = drops.reduce((s, d) => s + Math.min(d.sold_count, d.total_inventory), 0)
   const totalInventory = drops.reduce((s, d) => s + d.total_inventory, 0)
   const grossCents = drops.reduce((s, d) => s + Math.min(d.sold_count, d.total_inventory) * d.price_cents, 0)
   const liveCount = drops.filter((d) => d.status === "live").length

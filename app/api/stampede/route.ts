@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     const mode: PurchaseMode = body.mode === "naive" ? "naive" : "safe"
     const splitRegions: boolean = body.splitRegions !== false
     const downRegions: Region[] = Array.isArray(body.downRegions) ? body.downRegions : []
-    const count = Math.max(1, Math.min(5000, Math.floor(Number(body.count) || 1000)))
+    const count = Math.max(1, Math.min(2000, Math.floor(Number(body.count) || 1000)))
 
     // Validate the parent drop exists (app-layer referential integrity).
     const drop = await getDrop(dropId)
