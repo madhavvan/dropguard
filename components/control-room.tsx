@@ -6,6 +6,7 @@ import Link from "next/link"
 import {
   ArrowLeft,
   Gauge,
+  Globe,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -13,7 +14,7 @@ import {
   Users,
   Zap,
 } from "lucide-react"
-import type { DropMetrics, DropWithBrand, PurchaseAttempt, PurchaseMode } from "@/lib/types"
+import type { DropMetrics, DropWithBrand, PurchaseAttempt, PurchaseMode, Region } from "@/lib/types"
 import { compact, money, pct } from "@/lib/format"
 import { StatusPill } from "@/components/status-pill"
 import { MetricTile } from "@/components/metric-tile"
@@ -30,6 +31,7 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json())
 export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDrop: DropWithBrand }) {
   const [mode, setMode] = useState<PurchaseMode>("safe")
   const [count, setCount] = useState(1000)
+  const [down, setDown] = useState<Region[]>([])
   const [running, setRunning] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [lastRun, setLastRun] = useState<{ mode: PurchaseMode; sold: number; elapsed: number; count: number } | null>(
@@ -57,7 +59,7 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
       const res = await fetch("/api/stampede", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dropId, mode, count, splitRegions: true }),
+        body: JSON.stringify({ dropId, mode, count, splitRegions: true, downRegions: down }),
       })
       const json = await res.json()
       if (json.ok) {
@@ -205,6 +207,38 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
               </div>
             </div>
 
+            {/* Region chaos — click a region to simulate a regional outage */}
+            <div className="mt-4">
+              <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Globe className="h-4 w-4" />
+                Regions <span className="text-xs">(click to take one offline)</span>
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {(["us-east-1", "us-east-2"] as Region[]).map((r) => {
+                  const isDown = down.includes(r)
+                  return (
+                    <button
+                      key={r}
+                      onClick={() =>
+                        setDown((prev) => (prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]))
+                      }
+                      className={`flex items-center justify-between rounded-md border px-3 py-2 font-mono text-xs transition-colors ${
+                        isDown
+                          ? "border-destructive/50 bg-destructive/10 text-destructive"
+                          : "border-border bg-background hover:bg-accent"
+                      }`}
+                    >
+                      <span>{r}</span>
+                      <span className="flex items-center gap-1">
+                        <span className={`h-1.5 w-1.5 rounded-full ${isDown ? "bg-destructive" : "bg-primary"}`} />
+                        {isDown ? "OFFLINE" : "LIVE"}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
             <div className="mt-4 flex gap-2">
               <button
                 onClick={runStampede}
@@ -307,8 +341,8 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MetricTile label="p50 latency" value={`${metrics?.p50_latency ?? 0}ms`} tone="muted" icon={<Gauge className="h-4 w-4" />} />
             <MetricTile label="p99 latency" value={`${metrics?.p99_latency ?? 0}ms`} tone="muted" icon={<Gauge className="h-4 w-4" />} />
-            <RegionTile region="us-east-1" metrics={metrics} />
-            <RegionTile region="us-east-2" metrics={metrics} />
+            <RegionTile region="us-east-1" metrics={metrics} offline={down.includes("us-east-1")} />
+            <RegionTile region="us-east-2" metrics={metrics} offline={down.includes("us-east-2")} />
           </div>
 
           <AttemptFeed attempts={attempts} />
@@ -318,13 +352,24 @@ export function ControlRoom({ dropId, initialDrop }: { dropId: string; initialDr
   )
 }
 
-function RegionTile({ region, metrics }: { region: "us-east-1" | "us-east-2"; metrics?: DropMetrics }) {
+function RegionTile({
+  region,
+  metrics,
+  offline,
+}: {
+  region: "us-east-1" | "us-east-2"
+  metrics?: DropMetrics
+  offline?: boolean
+}) {
   const r = metrics?.regions[region]
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div className={`rounded-lg border bg-card p-4 ${offline ? "border-destructive/50" : "border-border"}`}>
       <div className="flex items-center gap-1.5 text-muted-foreground">
-        <span className="h-1.5 w-1.5 rounded-full bg-chart-2" />
-        <span className="font-mono text-[11px]">{region}</span>
+        <span className={`h-1.5 w-1.5 rounded-full ${offline ? "bg-destructive" : "bg-chart-2"}`} />
+        <span className="font-mono text-[11px]">
+          {region}
+          {offline ? " · OFFLINE" : ""}
+        </span>
       </div>
       <p className="mt-2 font-mono text-lg tabular text-foreground">{compact(r?.sold ?? 0)}</p>
       <p className="text-[11px] text-muted-foreground">sold · {compact(r?.attempts ?? 0)} attempts</p>
